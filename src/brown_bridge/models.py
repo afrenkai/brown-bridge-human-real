@@ -58,7 +58,10 @@ class DinoCatDogClassifier(nn.Module):
             raise ValueError(f"unsupported fusion: {fusion}")
         self.classifier = nn.Sequential(nn.Dropout(0.15), nn.Linear(dimension, 2))
 
-    def encode(self, images: Tensor) -> tuple[Tensor, Tensor | None]:
+    def encode_spatial(
+        self, images: Tensor
+    ) -> tuple[Tensor, Tensor | None, Tensor | None]:
+        """Return fused image features, gates, and normalized patch tokens."""
         tokens = self.backbone.forward_features(images)
         if isinstance(tokens, dict):
             key = next(
@@ -77,16 +80,30 @@ class DinoCatDogClassifier(nn.Module):
             if key is None:
                 raise KeyError(f"could not find CLS features in {tuple(tokens)}")
             features = self.cls_norm(tokens[key])
-            return features, None
+            return features, None, None
         if not isinstance(tokens, Tensor) or tokens.ndim != 3:
             raise ValueError("DINO backbone must return token tensor or feature dict")
         cls = self.cls_norm(tokens[:, 0])
         if self.fusion == "cls":
-            return cls, None
+            prefix = int(getattr(self.backbone, "num_prefix_tokens", 1))
+            return cls, None, tokens[:, prefix:]
         prefix = int(getattr(self.backbone, "num_prefix_tokens", 1))
-        patch = self.patch_norm(tokens[:, prefix:].mean(1))
-        gate = self.gate(torch.cat([cls, patch], dim=1))
-        return self.fusion_norm(gate * cls + (1.0 - gate) * patch), gate
+        raw_patches = tokens[:, prefix:]
+        patch_summary = self.patch_norm(raw_patches.mean(1))
+        patches = self.patch_norm(raw_patches)
+        gate = self.gate(torch.cat([cls, patch_summary], dim=1))
+        features = self.fusion_norm(gate * cls + (1.0 - gate) * patch_summary)
+        return features, gate, patches
+
+    def encode(self, images: Tensor) -> tuple[Tensor, Tensor | None]:
+        features, gate, _ = self.encode_spatial(images)
+        return features, gate
+
+    def forward_spatial_features(self, images: Tensor) -> tuple[Tensor, Tensor]:
+        features, _, patches = self.encode_spatial(images)
+        if patches is None:
+            raise ValueError("the selected backbone does not expose patch tokens")
+        return features, patches
 
     def forward_features(self, images: Tensor) -> Tensor:
         return self.encode(images)[0]

@@ -1,6 +1,12 @@
 import torch
 
-from brown_bridge.ot import barycentric_projection, sinkhorn, sinkhorn_divergence
+from brown_bridge.ot import (
+    barycentric_projection,
+    pairwise_cost,
+    sinkhorn,
+    sinkhorn_divergence,
+    sinkhorn_from_cost,
+)
 
 
 def test_sinkhorn_respects_nonuniform_marginals() -> None:
@@ -57,3 +63,13 @@ def test_barycentric_projection_is_marked_as_a_summary_by_behavior() -> None:
     plan = torch.tensor([[0.5, 0.5]])
     projected = barycentric_projection(plan, source, target)
     torch.testing.assert_close(projected, torch.zeros_like(projected))
+
+
+def test_sinkhorn_from_precomputed_cost_matches_feature_entry_point() -> None:
+    source = torch.tensor([[0.0], [1.0]])
+    target = torch.tensor([[0.25], [1.25]])
+    direct = sinkhorn(source, target, epsilon=0.2, cost="sqeuclidean")
+    precomputed = sinkhorn_from_cost(
+        pairwise_cost(source, target, "sqeuclidean"), epsilon=0.2
+    )
+    torch.testing.assert_close(direct.plan, precomputed.plan)

@@ -80,6 +80,24 @@ target/
 
 # Local datasets
 /data/
+**/data/
+**/datasets/
+
+# Generated experiment products and model state
+outputs/
+**/outputs/
+artifacts/
+**/artifacts/
+checkpoints/
+**/checkpoints/
+wandb/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.npz
+*.gif
+*.mp4
 
 # IPython
 profile_default/

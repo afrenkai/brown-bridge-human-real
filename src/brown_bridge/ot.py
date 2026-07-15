@@ -91,14 +91,38 @@ def sinkhorn(
     target_weights: Tensor | None = None,
 ) -> SinkhornResult:
     """Solve balanced entropic OT with log-domain Sinkhorn iterations."""
+    matrix = pairwise_cost(source, target, cost)
+    return sinkhorn_from_cost(
+        matrix,
+        epsilon=epsilon,
+        max_iterations=max_iterations,
+        tolerance=tolerance,
+        source_weights=source_weights,
+        target_weights=target_weights,
+    )
+
+
+def sinkhorn_from_cost(
+    cost_matrix: Tensor,
+    *,
+    epsilon: float = 0.05,
+    max_iterations: int = 1_000,
+    tolerance: float = 1e-7,
+    source_weights: Tensor | None = None,
+    target_weights: Tensor | None = None,
+) -> SinkhornResult:
+    """Solve balanced entropic OT from a precomputed ground-cost matrix."""
     if epsilon <= 0:
         raise ValueError("epsilon must be positive")
     if max_iterations < 1 or tolerance <= 0:
         raise ValueError("max_iterations and tolerance must be positive")
-
-    matrix = pairwise_cost(source, target, cost)
-    a = _probability_weights(len(source), source_weights, dtype=matrix.dtype)
-    b = _probability_weights(len(target), target_weights, dtype=matrix.dtype)
+    if cost_matrix.ndim != 2 or not all(cost_matrix.shape):
+        raise ValueError("cost_matrix must be nonempty and rank two")
+    matrix = cost_matrix.detach().to(device="cpu", dtype=torch.float64)
+    if not torch.isfinite(matrix).all() or torch.any(matrix < 0):
+        raise ValueError("cost_matrix must be finite and nonnegative")
+    a = _probability_weights(matrix.shape[0], source_weights, dtype=matrix.dtype)
+    b = _probability_weights(matrix.shape[1], target_weights, dtype=matrix.dtype)
     log_a, log_b = a.log(), b.log()
     log_kernel = -matrix / epsilon
     log_u = torch.zeros_like(log_a)

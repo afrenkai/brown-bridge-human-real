@@ -451,7 +451,122 @@ velocity, noise prior, or decoder. The clean architecture is therefore:
 If no conditional generative flow exists, use the residual DINO-feature editor
 and treat its output as a representation-level result, not an image edit.
 
-## 9. What to measure
+## 9. Identifiability and the reciprocal content-aware bridge
+
+Marginal matching alone does not identify an instance-level semantic map. If
+(T_#\mu_c=\mu_d), then composition with any measure-preserving automorphism
+of (\mu_d) has the same endpoint law. A dog classifier and a small terminal
+Sinkhorn divergence therefore do not establish that source information was
+preserved.
+
+The reciprocal experiment first estimates the empirical species direction
+
+\[
+d=\frac{\mathbb E_{\mu_d}Z-\mathbb E_{\mu_c}Z}
+        {\lVert\mathbb E_{\mu_d}Z-\mathbb E_{\mu_c}Z\rVert},
+\qquad P_\perp=I-dd^\top.
+\]
+
+For global token (g(x)) and spatial patch tokens (p_k(x)), its OT ground
+cost is
+
+\[
+c_{\rm content}(x,y)
+=\alpha\lVert \widehat{P_\perp g(x)}-\widehat{P_\perp g(y)}\rVert^2
++\frac{\beta}{K}\sum_{k=1}^K
+ \lVert\widehat{P_\perp p_k(x)}-\widehat{P_\perp p_k(y)}\rVert^2.
+\]
+
+Thus OT proposes correspondences using spatial content after removing the
+first-order class mean direction. It is still a modeling assumption, but it is
+strictly more informative than global class-feature distance.
+
+One velocity field (v_\theta(z,t,q)) and one score field
+(s_\psi(z,t,q)) are shared by directions (q\in\{-1,+1\}). Training draws
+both orientations of the same content-aware endpoint coupling and the noisy
+interpolant
+
+\[
+Z_t=(1-t)Z_0+tZ_1+\sqrt{2\tau t(1-t)}\,\epsilon.
+\]
+
+The base score-and-flow objective is augmented by
+
+\[
+\mathcal L
+=\mathcal L_{\rm SF2M}+\lambda_{\rm content}\mathcal L_{\rm content}
++\lambda_{\rm reciprocal}\mathcal L_{\rm reciprocal}
++\lambda_{\rm terminal}\mathcal L_{\rm terminal}.
+\]
+
+For a forward sample and its reverse driven by reversed, negated Brownian
+increments,
+
+\[
+\mathcal L_{\rm content}
+=\mathbb E\lVert P_\perp(Z_1-Z_0)\rVert^2,
+\qquad
+\mathcal L_{\rm reciprocal}
+=\mathbb E\lVert \overleftarrow T^{-W}
+  (\overrightarrow T^W(Z_0))-Z_0\rVert^2.
+\]
+
+The species term is a one-sided monotonicity penalty
+
+\[
+\mathbb E\left[\max\{0,-q\langle v_\theta(Z_t,t,q),d\rangle\}^2\right].
+\]
+
+It does not reward arbitrarily large class displacement. An earlier softplus
+margin continued pushing samples after they reached the target class and
+produced classifier-confident but distributionally worse endpoints. The
+terminal distribution loss and the class monotonicity constraint must remain
+separate for exactly this reason.
+
+### 9.1 Augmented inequality constraints
+
+A larger fixed endpoint coefficient can overfit a finite set of sliced
+projections and overwhelm content preservation. The augmented experiment uses
+three stochastic inequality constraints instead:
+
+\[
+g_e(\theta)=D_{\rm SW}(\rho_1^\theta,\mu_1)-\delta_e\le 0,
+\]
+
+\[
+g_c(\theta)=\mathbb E\lVert P_\perp(Z_1-Z_0)\rVert^2-\delta_c\le0,
+\qquad
+g_r(\theta)=\mathcal L_{\rm reciprocal}-\delta_r\le0.
+\]
+
+For constraint (g_k\), multiplier (\lambda_k\ge0\), and penalty
+(\rho_k>0\), the Powell--Hestenes--Rockafellar term is
+
+\[
+\mathcal A_k(\theta,\lambda_k)
+=\frac{
+\max\{0,\lambda_k+\rho_k g_k(\theta)\}^2-\lambda_k^2
+}{2\rho_k},
+\]
+
+with projected dual ascent
+
+\[
+\lambda_k\leftarrow
+\max\{0,\lambda_k+\rho_k g_k(\theta)\}.
+\]
+
+Both directions enter every content and reciprocal constraint batch. This is
+necessary: constraining only cat→dog produced a visibly asymmetric dog→cat
+failure even though the endpoint objective itself was bidirectional.
+
+Failure to approach the thresholds while multipliers continue growing is a
+diagnostic result. It means either the requested constraint set is infeasible
+for the current field/representation, or the stochastic sliced-Wasserstein
+constraint is insufficiently aligned with the held-out Sinkhorn metric. It
+should not be hidden by selecting a classifier-confident endpoint.
+
+## 10. What to measure
 
 At minimum, report:
 
@@ -466,7 +581,7 @@ At minimum, report:
 Do not treat a 2D PCA animation as evidence that transport succeeded. PCA is a
 lossy visualization fitted after the path is constructed.
 
-## 10. Recommended progression
+## 11. Recommended progression
 
 1. Start with pretrained or production-fine-tuned DINO features. A randomly
    initialized ViT with a DINO-shaped architecture is not a DINO semantic
