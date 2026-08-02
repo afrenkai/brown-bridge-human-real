@@ -9,18 +9,23 @@ description = "Optimal-transport paths between DINO feature distributions"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "diffusers>=0.39.0",
-    "flax>=0.12.7",
     "ipython>=9.15.0",
-    "jax>=0.10.2",
     "matplotlib>=3.11.0",
     "timm>=1.0.28",
     "torch>=2.13.0",
     "torchvision>=0.28.0",
 ]
 
+[project.optional-dependencies]
+image = ["diffusers>=0.39.0"]
+
 [dependency-groups]
-dev = ["pytest>=8.4"]
+dev = [
+    "ipykernel>=6.30",
+    "nbclient>=0.10",
+    "nbformat>=5.10",
+    "pytest>=8.4",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/brown_bridge"]
