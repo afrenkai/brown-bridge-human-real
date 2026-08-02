@@ -46,19 +46,18 @@ low-cost pair means “similar under the representation and cost we chose,” no
 “these two images depict the same individual.” That distinction is central to
 the project.
 
-Once an endpoint coupling has been chosen, the code can construct a path
-between paired endpoints. The main stochastic construction is a Brownian
-interpolant,
+Once an endpoint coupling has been chosen, the code constructs either an exact
+displacement chord or a Brownian-bridge diffusion between paired endpoints. The
+main stochastic construction is
 
 \[
   I_t=(1-t)X_0+tX_1+\sqrt{\varepsilon t(1-t)}Z,
 \]
 
-where \((X_0,X_1)\sim\pi\) and \(Z\) is standard Gaussian noise. Regression
-on the path velocity and conditional score produces a probability-flow ODE
-and reciprocal forward/backward SDEs. The ODE gives a clean deterministic
-visualization; the SDE keeps the important fact that a source image can have
-multiple plausible targets.
+where \((X_0,X_1)\sim\pi\) and \(Z\) is standard Gaussian noise. Score and
+bridge-drift regression produce reciprocal forward/backward SDEs. The endpoint
+coupling remains the OT object; the SDE only supplies a stochastic realization
+of the path.
 
 The repository also contains a source-only latent-transport formulation. It
 fits a Light Schrödinger Bridge to independent cat and dog latent samples and
@@ -134,8 +133,22 @@ to avoid turning multiple valid targets into one conditional mean.
 
 ## A concrete XM+OT experiment
 
-The next experiment should be deliberately small and comparable with the
-existing rectified-flow and LightSB baselines.
+The repository now has the first small XM+OT hook. The existing bidirectional
+latent diffusion trainer already consumes expected minibatch-OT cat/dog pairs;
+passing `--exploration-candidates K` makes each diffusion training example
+explore K noise candidates and backpropagate only through the best one. The
+default `K=1` is the original baseline.
+
+For example:
+
+```bash
+uv run python experiments/train_bidirectional_kl_vae_diffusion.py \
+  --exploration-candidates 4 \
+  --steps 12000
+```
+
+This is intentionally a training-time integration, not a claim that XM has
+already solved the image-space transport problem.
 
 ### 1. Freeze the semantic geometry
 
@@ -172,13 +185,8 @@ to the original distribution.
 
 ### 4. Compare the right baselines
 
-The ablation should compare:
-
-- independent-pair flow matching;
-- OT-paired rectified flow;
-- LightSB or the stochastic-interpolant bridge;
-- OT-paired conditional generation without XM;
-- OT-paired conditional generation with XM-\(K\), for several values of \(K\).
+The active ablation should compare exact OT chords, OT Brownian bridges without
+XM, and OT Brownian bridges with XM-\(K\), for several values of \(K\).
 
 Keep the architecture, data, and compute budget visible. XM spends more
 training compute by design, so the fair comparison reports both quality at a
@@ -206,6 +214,37 @@ convincing, endpoint-conditioned morph as proof that a source-only distribution
 has been transported. The useful research direction is an XM-augmented,
 semantically coupled, bidirectional latent transport model whose success is
 measured by both endpoint marginals and provenance-preserving paths.
+
+## Text extension: WikiText-2 before OpenWebText
+
+The same separation gives a small text proof-of-life. The experiment in
+`experiments/text_wikitext_ot_diffusion.py` uses real WikiText-2 paragraphs,
+selects two weakly topic-conditioned corpus slices, builds a continuous TF-IDF
+PCA representation, and solves entropic OT between the two empirical measures.
+It then trains a bidirectional Brownian-bridge diffusion model in that latent
+space. The model predicts the stochastic bridge drift and score; it does not
+train a flow-matching or rectified-flow velocity field.
+
+The XM hook gives each noisy bridge state several candidate drift/score
+predictions and backpropagates through the candidate with the smallest bridge
+loss. At sampling time, candidate states are selected against the destination
+empirical distribution. This is a useful exploratory mechanism, but the
+WikiText-2 representation is intentionally only a placeholder for a JEPA- or
+ELF-style decoder-compatible latent. ELF is a strong architectural reference
+for continuous text embeddings and late token decoding, while its own core
+objective remains flow matching; the pure-OT experiment keeps that interface
+separate from the diffusion transport objective.
+
+Run it with:
+
+```bash
+uv run python experiments/text_wikitext_ot_diffusion.py --download \
+  --steps 1500 --rollout-steps 256
+```
+
+WikiText-2 is small enough for a reproducible toy. The next scale-up should
+stream a fixed OpenWebText shard and replace TF-IDF PCA with a pretrained
+continuous text autoencoder or JEPA-like representation.
 
 ## References
 

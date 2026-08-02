@@ -522,6 +522,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sampling-start", type=float, default=1.0)
     parser.add_argument("--min-snr", type=float, default=5.0)
     parser.add_argument("--condition-dropout", type=float, default=0.1)
+    parser.add_argument("--exploration-candidates", type=int, default=1)
     parser.add_argument("--guidance-scale", type=float, default=1.5)
     parser.add_argument("--lambda-x0", type=float, default=0.05)
     parser.add_argument("--lambda-low-frequency", type=float, default=0.1)

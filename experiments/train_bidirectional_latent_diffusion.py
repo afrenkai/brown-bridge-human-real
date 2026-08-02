@@ -16,6 +16,7 @@ from torch import Tensor
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from brown_bridge.data import BatchPreprocessor
+from brown_bridge.exploration import best_of_k_loss
 from brown_bridge.latent_diffusion import (
     BidirectionalLatentDenoiser,
     conditional_latent_ddim_sample,
@@ -68,6 +69,8 @@ def train_endpoint_kernel(
     args: argparse.Namespace,
     device: torch.device,
 ) -> tuple[BidirectionalLatentDenoiser, list[dict[str, float]]]:
+    if args.exploration_candidates < 1:
+        raise ValueError("exploration-candidates must be positive")
     model = BidirectionalLatentDenoiser(
         args.latent_channels,
         base_channels=args.model_width,
@@ -107,34 +110,70 @@ def train_endpoint_kernel(
             dropped = torch.rand(args.batch_size, generator=generator) < args.condition_dropout
             condition = condition.masked_fill(dropped.to(device)[:, None, None, None], 0.0)
         time_index = torch.randint(
-            args.diffusion_steps, (args.batch_size,), generator=generator
+            args.diffusion_steps,
+            (args.batch_size,),
+            generator=generator,
         ).to(device)
-        noise = torch.randn(clean.shape, generator=generator).to(device)
-        noisy = q_sample(clean, noise, time_index, alpha_bar)
-        time = time_index.float() / max(args.diffusion_steps - 1, 1)
-        prediction = model(noisy, condition, time, direction)
-        per_sample = (prediction - noise).square().mean((1, 2, 3))
-        cumulative = alpha_bar[time_index]
+        candidate_count = args.exploration_candidates
+        candidate_clean = clean.repeat(candidate_count, 1, 1, 1)
+        candidate_condition = condition.repeat(candidate_count, 1, 1, 1)
+        candidate_direction = direction.repeat(candidate_count)
+        candidate_time_index = time_index.repeat(candidate_count)
+        candidate_noise = torch.randn(
+            candidate_clean.shape,
+            generator=generator,
+        ).to(device)
+        candidate_noisy = q_sample(
+            candidate_clean,
+            candidate_noise,
+            candidate_time_index,
+            alpha_bar,
+        )
+        candidate_time = candidate_time_index.float() / max(args.diffusion_steps - 1, 1)
+        candidate_prediction = model(
+            candidate_noisy,
+            candidate_condition,
+            candidate_time,
+            candidate_direction,
+        )
+        candidate_shape = (
+            candidate_count,
+            args.batch_size,
+            *clean.shape[1:],
+        )
+        prediction = candidate_prediction.reshape(candidate_shape)
+        noise = candidate_noise.reshape(candidate_shape)
+        noisy = candidate_noisy.reshape(candidate_shape)
+        cumulative = alpha_bar[candidate_time_index].reshape(
+            candidate_count, args.batch_size
+        )
         snr = cumulative / (1.0 - cumulative).clamp_min(1e-6)
-        min_snr_weight = torch.minimum(snr, torch.full_like(snr, args.min_snr)) / snr
-        shape = (len(clean),) + (1,) * (clean.ndim - 1)
+        min_snr_weight = torch.minimum(
+            snr,
+            torch.full_like(snr, args.min_snr),
+        ) / snr
+        denoising_error = (prediction - noise).square().mean((2, 3, 4))
+        reconstruction_shape = (candidate_count, args.batch_size) + (1,) * (clean.ndim - 1)
         predicted_clean = (
-            noisy - (1.0 - cumulative).sqrt().reshape(shape) * prediction
-        ) / cumulative.sqrt().reshape(shape).clamp_min(1e-4)
-        x0 = F.smooth_l1_loss(predicted_clean, clean, reduction="none").mean((1, 2, 3))
-        low_frequency = F.smooth_l1_loss(
-            F.avg_pool2d(predicted_clean, 4),
-            F.avg_pool2d(clean, 4),
+            noisy - (1.0 - cumulative).sqrt().reshape(reconstruction_shape) * prediction
+        ) / cumulative.sqrt().reshape(reconstruction_shape).clamp_min(1e-4)
+        x0 = F.smooth_l1_loss(
+            predicted_clean,
+            candidate_clean.reshape(candidate_shape),
             reduction="none",
-        ).mean((1, 2, 3))
-        loss = (
-            min_snr_weight
-            * (
-                per_sample
-                + args.lambda_x0 * x0
-                + args.lambda_low_frequency * low_frequency
-            )
-        ).mean()
+        ).mean((2, 3, 4))
+        low_frequency = F.smooth_l1_loss(
+            F.avg_pool2d(predicted_clean.flatten(0, 1), 4),
+            F.avg_pool2d(candidate_clean.reshape(candidate_shape).flatten(0, 1), 4),
+            reduction="none",
+        ).mean((1, 2, 3)).reshape(candidate_count, args.batch_size)
+        candidate_losses = min_snr_weight * (
+            denoising_error
+            + args.lambda_x0 * x0
+            + args.lambda_low_frequency * low_frequency
+        )
+        selected = best_of_k_loss(candidate_losses.transpose(0, 1))
+        loss = selected.loss
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -144,9 +183,10 @@ def train_endpoint_kernel(
             record = {
                 "step": float(step),
                 "weighted_noise_mse": float(loss.detach()),
-                "noise_mse": float(per_sample.mean().detach()),
+                "noise_mse": float(denoising_error.mean().detach()),
                 "x0_smooth_l1": float(x0.mean().detach()),
                 "low_frequency_smooth_l1": float(low_frequency.mean().detach()),
+                "exploration_candidates": float(candidate_count),
             }
             history.append(record)
             print("latent diffusion " + json.dumps(record), flush=True)
@@ -352,6 +392,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sampling-start", type=float, default=1.0)
     parser.add_argument("--min-snr", type=float, default=5.0)
     parser.add_argument("--condition-dropout", type=float, default=0.1)
+    parser.add_argument("--exploration-candidates", type=int, default=1)
     parser.add_argument("--guidance-scale", type=float, default=1.5)
     parser.add_argument("--lambda-x0", type=float, default=0.05)
     parser.add_argument("--lambda-low-frequency", type=float, default=0.1)

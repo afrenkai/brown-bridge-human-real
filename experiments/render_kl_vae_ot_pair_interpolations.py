@@ -21,6 +21,34 @@ from train_bidirectional_kl_vae_diffusion import (
 from train_distributional_latent_transport import make_domain_contact_sheet, pil_paths
 
 
+def decode_exact_chord(
+    vae: torch.nn.Module,
+    source: torch.Tensor,
+    target: torch.Tensor,
+    times: torch.Tensor,
+    *,
+    batch_size: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Decode exact linear latent interpolation for a fixed OT pairing."""
+    path = (
+        (1.0 - times[:, None, None, None, None]) * source[None]
+        + times[:, None, None, None, None] * target[None]
+    )
+    decoded_path = torch.cat(
+        [
+            decode_batches(
+                vae,
+                frame,
+                batch_size=batch_size,
+                device=device,
+            )[None]
+            for frame in path
+        ]
+    )
+    return decoded_path.transpose(0, 1)
+
+
 def run(args: argparse.Namespace) -> dict[str, object]:
     device = torch.device("mps")
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -39,18 +67,22 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     cat = paired_cat[indices].to(device)
     dog = paired_dog[indices].to(device)
     time = torch.linspace(0.0, 1.0, args.display_steps, device=device)
-    path = (
-        (1.0 - time[:, None, None, None, None]) * cat[None]
-        + time[:, None, None, None, None] * dog[None]
+    forward_path = decode_exact_chord(
+        vae,
+        cat,
+        dog,
+        time,
+        batch_size=args.vae_batch_size,
+        device=device,
     )
-    decoded_path = torch.cat(
-        [
-            decode_batches(
-                vae, frame, batch_size=args.vae_batch_size, device=device
-            )[None]
-            for frame in path
-        ]
-    ).transpose(0, 1)
+    reverse_path = decode_exact_chord(
+        vae,
+        dog,
+        cat,
+        time,
+        batch_size=args.vae_batch_size,
+        device=device,
+    )
     decoded_cat = decode_batches(
         vae, cat, batch_size=args.vae_batch_size, device=device
     )
@@ -59,12 +91,21 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     )
     make_domain_contact_sheet(
         pil_images(decoded_cat),
-        pil_paths(decoded_path),
+        pil_paths(forward_path),
         pil_images(decoded_dog),
         args.output_dir / f"{args.cost}_ot_exact_kl_chords.png",
         source_name="paired cat",
         target_name="paired dog",
         clock_label="exact frozen KL-VAE chord; upper bound for pairwise overfit",
+    )
+    make_domain_contact_sheet(
+        pil_images(decoded_dog),
+        pil_paths(reverse_path),
+        pil_images(decoded_cat),
+        args.output_dir / f"{args.cost}_ot_exact_kl_reverse_chords.png",
+        source_name="paired dog",
+        target_name="paired cat",
+        clock_label="exact frozen KL-VAE reverse chord; same OT pairs",
     )
     distance = (cat - dog).square().flatten(1).mean(1).cpu()
     summary = {
