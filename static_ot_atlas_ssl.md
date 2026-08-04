@@ -15,9 +15,12 @@ examples:
 3. the decoded endpoint is valid and semantically credible.
 
 The current evidence says that (1) is easy, (2) is dataset-dependent, and (3)
-is the present bottleneck.  The immediate plan is therefore to make the text
-codec generalize before scaling the atlas.  Decoder-path dynamic OT is a
-separate, CUDA-only phase, not a Metal experiment.
+is the present bottleneck.  A completed 50k-document OpenWebText codec run
+confirms that conclusion: it retains enough meaning for 75.8% held-out
+sentence retrieval, but cannot yet decode its compressed state faithfully.
+The immediate plan is therefore to make the text codec generalize before
+scaling the atlas.  Decoder-path dynamic OT is a separate, CUDA-only phase,
+not a Metal experiment.
 
 ## Non-negotiable pure model
 
@@ -79,6 +82,7 @@ to calculate an evaluation OT cost, never to select the endpoint.
 | AFHQ cat \(\leftrightarrow\) dog | Chart-label accuracy 98.63%; coordinate cycle MSE \(8.35\times10^{-13}\). | Decoded DINO OT worsened by 0.0385: frozen latent decoder endpoints are off manifold. |
 | PACS domain transport | Exact coordinate cycle MSE \(3.08\times10^{-13}\). | Held-out DINO OT worsened by 0.0303 and decoded images had artifacts. |
 | SST-2 compact T5 slots | Native T5-state interface is valid; static inverse cycle MSE \(\approx10^{-13}\). | The 8-fold compact codec overfit: held-out slot CE 4.33; endpoint OT worsened in both directions. |
+| OpenWebText T5 slot codec | A 50k-document MPS run with 32-by-128 slots (4x compression) finished; semantic retrieval of decoded held-out examples reached 75.8%, with low latent-cycle (0.0102) and JEPA (0.0131) losses. | It is not decoder-compatible: held-out codec CE was 3.223 versus 0.0065 for native T5 states (gap 3.217), and normalized token edit distance was 0.880.  The decoded outputs collapse to generic/repetitive text, so the SST-2 atlas is correctly blocked. |
 
 The SST-2 baseline is implemented in
 [`experiments/text_sst2_t5_slot_monge_ot.py`](experiments/text_sst2_t5_slot_monge_ot.py).
@@ -165,6 +169,32 @@ not the deployment map.  [I-JEPA](https://arxiv.org/abs/2301.08243),
 
 Failure means increase representation capacity or data, not add a text flow,
 a target-aware retrieval path, or a corrector.
+
+**Completed run (2026-08-04).**  The implementation in
+[`experiments/text_owt_t5_slot_codec.py`](experiments/text_owt_t5_slot_codec.py)
+pretrained the stated 32-by-128 codec for 20,000 steps on 50,000 deterministic
+OpenWebText documents on Metal MPS, with 1,000 held-out documents.  It was a
+useful representation experiment but does not pass the decoding gate:
+
+| Held-out quantity | Result | Gate / interpretation |
+| --- | ---: | --- |
+| Native frozen-T5 teacher-forced CE | 0.0065 | The frozen decoder boundary itself is sound. |
+| Codec teacher-forced CE | 3.2233 | CE gap 3.2169; fails the \(\leq0.5\) gate. |
+| Normalized autoregressive token edit distance | 0.8799 | Fails the \(\leq0.20\) gate. |
+| Decoded semantic retrieval top-1 | 75.8% | Meaning survives substantially better than lexical surface form. |
+| Latent decode--re-encode cycle MSE | 0.0102 | Low, but not sufficient for usable decoding. |
+| Masked-context JEPA loss | 0.0131 | Low, but not sufficient for usable decoding. |
+
+This removes an ambiguity from the next iteration: increasing or redesigning
+the codec must preserve the decoder's contextual state geometry, rather than
+merely lower a latent reconstruction objective.  The next Metal-compatible
+ablation keeps the frozen T5 boundary and the pure static-OT restriction, but
+raises slot capacity toward the native state and weights teacher-forced token
+CE more strongly.  Stage 2 remains prohibited until both held-out decode gates
+pass.  The full result is recorded in
+[`outputs/text_owt_t5_slot_codec_50k/summary.json`](outputs/text_owt_t5_slot_codec_50k/summary.json)
+and representative failures are in
+[`outputs/text_owt_t5_slot_codec_50k/heldout_decoded_examples.jsonl`](outputs/text_owt_t5_slot_codec_50k/heldout_decoded_examples.jsonl).
 
 ### Stage 2 — labelled static SST-2 atlas
 
