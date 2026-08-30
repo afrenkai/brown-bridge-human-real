@@ -14,13 +14,13 @@ from torch import Tensor, nn
 from torchvision.transforms.functional import pil_to_tensor
 from utils.model_utils import instantiate_from_config
 
+from brown_bridge.bridges import sample_pinned_brownian_bridge
 from brown_bridge.features import (
     compact_spatial_content_descriptor,
     content_cost_matrix,
     species_direction,
 )
 from brown_bridge.ot import sinkhorn_from_cost
-from brown_bridge.spatial_stochastic import sample_pinned_brownian_bridge
 
 
 def load_image(path: Path, image_size: int) -> Tensor:

@@ -7,8 +7,8 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=384G
 #SBATCH --time=23:30:00
-#SBATCH --output=/home/afrenk/brown-bridge-human-real/logs/%x_%j.out
-#SBATCH --error=/home/afrenk/brown-bridge-human-real/logs/%x_%j.err
+#SBATCH --output=slurm-%x-%j.out
+#SBATCH --error=slurm-%x-%j.err
 
 set -euo pipefail
 

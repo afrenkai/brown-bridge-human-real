@@ -1,106 +1,105 @@
 # Brown Bridge
 
-Bidirectional transport between two empirical distributions. The active
-examples use entropic optimal transport to choose endpoint couplings and then
-either render exact displacement chords or learn a stochastic Brownian-bridge
-diffusion. No rectified-flow or flow-matching objective is part of the active
-path.
+A lean research repository for optimal transport and RAE-based AFHQ cat/dog
+generation. The retained code has two clear roles:
 
-The central distinction is:
+- a learned, source-only generator that maps Gaussian noise and a cat/dog label
+  to an image with a frozen RAE decoder; and
+- small endpoint-coupled OT diagnostics and baselines.
 
-1. OT decides which mass in distribution A is coupled to mass in distribution B.
-2. A diffusion bridge models a stochastic path between those coupled endpoint
-   laws.
-3. A decoder or nearest-neighbor lookup turns the continuous path back into
-   observations.
+The two roles are not interchangeable. The RAE generator needs no target image
+at inference. The OT round-trip renderer selects real endpoints and is only a
+path diagnostic.
 
-## Start here
+## Repository map
+
+```text
+configs/                    RAE AFHQ fine-tuning configuration
+experiments/                Six maintained experiment entry points
+slurm_scripts/turing/       RAE setup, training, generation, and evaluation jobs
+src/brown_bridge/           Small tested OT and bridge kernel
+tests/                      Focused tests for the retained kernel
+docs/                       Current runbook and research decisions
+```
+
+Maintained experiments:
+
+| Entry point | Purpose |
+| --- | --- |
+| `experiments/sample_rae_afhq_generator.py` | Source-only Gaussian + label RAE sampling |
+| `experiments/evaluate_rae_afhq_generator.py` | Held-out known-class RAE evaluation |
+| `experiments/render_rae_ot_sde_roundtrip.py` | Endpoint-coupled dog → cat → dog diagnostic |
+| `experiments/mnist_mps_ot.py` | Exact displacement paths from an entropic MNIST coupling |
+| `experiments/toy_mps_xm_ot.py` | Small bidirectional best-of-K OT model |
+| `experiments/text_wikitext_ot_diffusion.py` | WikiText topic transport proof-of-life |
+
+Retired prototypes remain available in Git history. They are not shipped as
+active code.
+
+## Install and verify
+
+The core package depends only on PyTorch:
 
 ```bash
-uv sync --group dev
-uv run pytest -q
-
-# Small image-feature OT example
-uv run python experiments/cat_dog.py
-
-# Bidirectional feature-space bridge
-uv run python experiments/reciprocal_cat_dog.py
-
-# Exact 784-D pixel OT: MNIST 9 ↔ 1 on Metal
-uv run python experiments/mnist_mps_ot.py --download
-
-# Real text: WikiText-2 topic slices, OT Brownian bridge, XM candidates
-uv run python experiments/text_wikitext_ot_diffusion.py --download \
-  --steps 1500 --rollout-steps 256
-
-# Exact cat ↔ dog KL-VAE latent chords rendered to pixels
-uv run --extra image python \
-  experiments/render_kl_vae_ot_pair_interpolations.py --cost spatial
+uv sync --dev
+uv run pytest
+uvx ruff check src experiments tests
+uvx black --check src experiments tests
 ```
 
-Generated data, checkpoints, and plots are ignored by git. The historical
-entry points moved out of the active tree are listed in
-[`deprecated/README.md`](deprecated/README.md).
+Install the optional plotting and torchvision dependencies for the small demos:
 
-## Mathematical object
-
-Let `mu_0` and `mu_1` be empirical laws and let `pi` be an entropic OT coupling.
-For `(X_0, X_1) ~ pi`, the exact ambient displacement chord is
-
-```text
-X_t = (1 - t) X_0 + t X_1.
+```bash
+uv sync --dev --extra demos
 ```
 
-For a stochastic bridge, use
+The MNIST and toy demos require Apple Metal MPS:
 
-```text
-I_t = (1 - t) X_0 + t X_1
-      + sqrt(epsilon * t * (1 - t)) * Z.
+```bash
+uv run --extra demos python experiments/mnist_mps_ot.py --download
+uv run --extra demos python experiments/toy_mps_xm_ot.py
 ```
 
-The active diffusion experiments learn bridge score/drift quantities from
-these analytically constructed noisy states and integrate a stochastic
-differential equation. This is distinct from fitting a deterministic
-rectified-flow velocity field.
+The WikiText baseline is CPU compatible:
 
-## Code map
-
-```text
-src/brown_bridge/
-  ot.py                       balanced entropic OT / Sinkhorn
-  paths.py                    exact chords and Brownian bridge paths
-  stochastic_interpolants.py Brownian bridge regression targets
-  schrodinger.py              empirical Schrödinger bridge utilities
-  reciprocal.py               bidirectional SDE utilities
-  light_sb.py                 lightweight stochastic-bridge baseline
-  exploration.py              XM best-of-K candidate objective
-
-experiments/
-  cat_dog.py                  smallest DINO + OT experiment
-  reciprocal_cat_dog.py      bidirectional feature-space bridge
-  mnist_mps_ot.py             exact 784-D MNIST 9 ↔ 1 OT check
-  text_wikitext_ot_diffusion.py
-                              WikiText-2 OT bridge with XM candidates
-  render_kl_vae_ot_pair_interpolations.py
-                              exact KL-VAE OT chords, forward and reverse
-  toy_mps_xm_ot.py            small MPS OT + XM sanity check
+```bash
+uv run --extra demos python experiments/text_wikitext_ot_diffusion.py --download
 ```
 
-## Text direction
+## RAE AFHQ workflow
 
-`text_wikitext_ot_diffusion.py` uses real WikiText-2 paragraphs, forms two
-weakly topic-conditioned corpus slices, maps them to a continuous TF-IDF/PCA
-latent, and solves entropic OT. It then trains a bidirectional Brownian-bridge
-diffusion with four candidate drift/score predictions per noisy state. XM
-selects the lowest-loss candidate during training; rollout selection scores
-candidate states against the destination empirical distribution.
+The RAE jobs use a separate managed environment and the official RAE checkout.
+They are Turing-specific and use cluster paths recorded in the runbook. From the
+repository root, submit:
 
-This is a transport proof-of-life, not yet a semantic text editor. TF-IDF/PCA
-is a deliberately transparent placeholder for a decoder-compatible JEPA- or
-ELF-style continuous text representation. ELF is relevant to the interface—its
-model remains in continuous embedding space until late token decoding—but its
-published objective is continuous-time flow matching, so it is not used as the
-transport objective here.
+```bash
+sbatch slurm_scripts/turing/setup_rae_managed_python.sbatch
+sbatch slurm_scripts/turing/rae_afhq_dit_s_full_h100.sbatch
+sbatch slurm_scripts/turing/rae_afhq_generate_evalset_h100.sbatch
+sbatch slurm_scripts/turing/rae_afhq_evaluate_h100.sbatch
+```
 
-The next text step is to replace TF-IDF/PCA with a pretrained continuous text
-autoencoder or self-supervised latent, then stream a fixed OpenWebText shard.
+See [`docs/rae_afhq_generator.md`](docs/rae_afhq_generator.md) for assets, data
+views, configuration, and interpretation. The completed CFG 1.5 evaluation
+reached 99.34% generated class agreement. Cat/dog RAE-FD128 was 20.543/27.921.
+Diversity ratios of 0.770/0.821 show remaining mode contraction.
+
+The titleless endpoint-conditioned round-trip GIF is produced separately with:
+
+```bash
+sbatch slurm_scripts/turing/rae_ot_sde_roundtrip_h100.sbatch
+```
+
+## Scientific scope
+
+- AFHQ validation measures held-out images from trained classes. It is not an
+  unseen-class generalization result.
+- Endpoint-coupled interpolation does not prove source-only generation.
+- Frozen-RAE feature metrics are useful audits, not independent human realism
+  scores.
+- Generated outputs, checkpoints, datasets, logs, and caches are excluded from
+  Git.
+
+The current image-space distinction and the longer-term bijective-map direction
+are summarized in [`docs/cat_dog_ot.md`](docs/cat_dog_ot.md) and
+[`docs/static_ot_atlas_ssl.md`](docs/static_ot_atlas_ssl.md).

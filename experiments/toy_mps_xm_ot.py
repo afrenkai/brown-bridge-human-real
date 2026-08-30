@@ -11,8 +11,9 @@ import torch
 from torch import Tensor, nn
 
 from brown_bridge.exploration import best_of_k_loss
-from brown_bridge.ot import SinkhornResult, sinkhorn
-from brown_bridge.paths import CoupledEndpoints, sample_coupling
+from brown_bridge.ot import sinkhorn
+from brown_bridge.paths import sample_coupling
+from brown_bridge.schemas import CoupledEndpoints, SinkhornResult
 
 
 class ToyTransportModel(nn.Module):
@@ -48,7 +49,9 @@ def make_toy_samples(
     if centers.ndim != 2 or centers.shape[1] != 2:
         raise ValueError("centers must have shape [components, 2]")
     if sample_count < 1 or noise_scale <= 0:
-        raise ValueError("sample_count must be positive and noise_scale must be positive")
+        raise ValueError(
+            "sample_count must be positive and noise_scale must be positive"
+        )
     component_indices = torch.randint(
         len(centers),
         (sample_count,),
@@ -98,12 +101,12 @@ def train_bidirectional_model(
             torch.tensor(1.0),
         )
         forward = direction > 0
-        source_batch = torch.where(
-            forward[:, None], paired_source, paired_target
-        ).to(device)
-        target_batch = torch.where(
-            forward[:, None], paired_target, paired_source
-        ).to(device)
+        source_batch = torch.where(forward[:, None], paired_source, paired_target).to(
+            device
+        )
+        target_batch = torch.where(forward[:, None], paired_target, paired_source).to(
+            device
+        )
         direction = direction.to(device)
 
         noise = torch.randn(
@@ -120,8 +123,8 @@ def train_bidirectional_model(
             candidate_direction.reshape(-1),
         ).reshape(candidate_count, batch_size, 2)
         candidate_losses = (
-            candidate_predictions - target_batch[None, :, :]
-        ).square().mean(dim=2)
+            (candidate_predictions - target_batch[None, :, :]).square().mean(dim=2)
+        )
         selected = best_of_k_loss(candidate_losses.transpose(0, 1))
 
         optimizer.zero_grad(set_to_none=True)
@@ -194,7 +197,9 @@ def plot_results(
     axes[0, 0].set_title("OT endpoint samples")
     axes[0, 0].legend()
 
-    axes[0, 1].scatter(source_points[:, 0], source_points[:, 1], s=12, label="cat source")
+    axes[0, 1].scatter(
+        source_points[:, 0], source_points[:, 1], s=12, label="cat source"
+    )
     forward_points = forward_samples.numpy()
     axes[0, 1].scatter(
         forward_points[:, 0],
@@ -212,7 +217,9 @@ def plot_results(
     axes[0, 1].set_title("Forward transport")
     axes[0, 1].legend()
 
-    axes[1, 0].scatter(target_points[:, 0], target_points[:, 1], s=12, label="dog source")
+    axes[1, 0].scatter(
+        target_points[:, 0], target_points[:, 1], s=12, label="dog source"
+    )
     backward_points = backward_samples.numpy()
     axes[1, 0].scatter(
         backward_points[:, 0],
@@ -283,7 +290,9 @@ def parse_args() -> argparse.Namespace:
 
 def run(args: argparse.Namespace) -> dict[str, object]:
     if not torch.backends.mps.is_available():
-        raise RuntimeError("Metal is unavailable: this example requires torch.device('mps')")
+        raise RuntimeError(
+            "Metal is unavailable: this example requires torch.device('mps')"
+        )
     if args.sample_count < 1 or args.paired_samples < 1:
         raise ValueError("sample-count and paired-samples must be positive")
 

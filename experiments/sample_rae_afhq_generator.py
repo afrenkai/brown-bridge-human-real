@@ -124,10 +124,7 @@ def run_sampler(
 
 
 def final_latents(trajectory: torch.Tensor | list[torch.Tensor]) -> torch.Tensor:
-    if isinstance(trajectory, list):
-        final = trajectory[-1]
-    else:
-        final = trajectory[-1]
+    final = trajectory[-1]
     if not torch.isfinite(final).all():
         raise FloatingPointError("Sampler produced nonfinite final latents")
     return final
@@ -138,9 +135,11 @@ def combine_trajectories(
     second: torch.Tensor | list[torch.Tensor],
 ) -> torch.Tensor | list[torch.Tensor]:
     if isinstance(first, list) and isinstance(second, list):
+        if len(first) != len(second):
+            raise ValueError("Trajectory lengths differ")
         return [
-            torch.cat((first_state, second_state), dim=0)
-            for first_state, second_state in zip(first, second, strict=True)
+            torch.cat((first_state, second[trajectory_index]), dim=0)
+            for trajectory_index, first_state in enumerate(first)
         ]
     if isinstance(first, torch.Tensor) and isinstance(second, torch.Tensor):
         return torch.cat((first, second), dim=1)
@@ -267,11 +266,15 @@ def render_trajectories(
                 )
         final_latents(trajectory)
         decoded = decode_trajectory(rae, trajectory)
-        class_names = ("cat", "dog")
-        for class_name, frames in zip(class_names, decoded, strict=True):
-            save_gif(frames, output_dir / f"gaussian_to_{class_name}_{mode}.gif")
+        if len(decoded) != 2:
+            raise ValueError("Expected cat and dog trajectory batches")
+        save_gif(decoded[0], output_dir / f"gaussian_to_cat_{mode}.gif")
+        save_gif(decoded[1], output_dir / f"gaussian_to_dog_{mode}.gif")
+        if len(decoded[0]) != len(decoded[1]):
+            raise ValueError("Decoded cat and dog trajectory lengths differ")
         paired_frames: list[Image.Image] = []
-        for cat_frame, dog_frame in zip(decoded[0], decoded[1], strict=True):
+        for frame_index, cat_frame in enumerate(decoded[0]):
+            dog_frame = decoded[1][frame_index]
             paired = Image.new(
                 "RGB", (cat_frame.width + dog_frame.width, cat_frame.height)
             )

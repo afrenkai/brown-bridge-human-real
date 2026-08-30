@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=02:00:00
-#SBATCH --output=/home/afrenk/brown-bridge-human-real/logs/%x_%j.out
-#SBATCH --error=/home/afrenk/brown-bridge-human-real/logs/%x_%j.err
+#SBATCH --output=slurm-%x-%j.out
+#SBATCH --error=slurm-%x-%j.err
 
 set -euo pipefail
 
@@ -29,8 +29,8 @@ export HF_HOME="/scratch/afrenk/huggingface"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 echo "RAE OT-SDE round-trip render"
-echo "  brown-bridge revision: $(cat "${REPO_ROOT}/.git/refs/heads/main" 2>/dev/null || echo unknown)"
-echo "  RAE revision: $(cat "${RAE_ROOT}/.git/refs/heads/main" 2>/dev/null || echo unknown)"
+echo "  brown-bridge revision: $(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)"
+echo "  RAE revision: $(git -C "${RAE_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)"
 echo "  host: $(hostname)"
 echo "  output: ${OUTPUT_ROOT}"
 
