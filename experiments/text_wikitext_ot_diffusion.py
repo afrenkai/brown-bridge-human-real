@@ -13,18 +13,14 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor
+from torch import Tensor, nn
 
+from brown_bridge.bridges import brownian_interpolant
 from brown_bridge.exploration import best_of_k_loss
 from brown_bridge.ot import sinkhorn
-from brown_bridge.paths import CoupledEndpoints, sample_coupling
-from brown_bridge.stochastic_interpolants import brownian_interpolant
-
-WIKITEXT_URL = "https://huggingface.co/datasets/ggml-org/ci/resolve/main/wikitext-2-raw-v1.zip"
-TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z'-]*")
-HEADING_PATTERN = re.compile(r"^=+\s+(.+?)\s+=+$")
+from brown_bridge.paths import sample_coupling
+from brown_bridge.schemas import CoupledEndpoints
 
 
 @dataclass(frozen=True)
@@ -43,7 +39,11 @@ def ensure_wikitext(root: Path, *, download: bool) -> Path:
         )
     root.mkdir(parents=True, exist_ok=True)
     archive_path = root / "wikitext-2-raw-v1.zip"
-    urllib.request.urlretrieve(WIKITEXT_URL, archive_path)
+    dataset_url = (
+        "https://huggingface.co/datasets/ggml-org/ci/resolve/main/"
+        "wikitext-2-raw-v1.zip"
+    )
+    urllib.request.urlretrieve(dataset_url, archive_path)
     with zipfile.ZipFile(archive_path) as archive:
         archive.extractall(root)
     return raw_path
@@ -54,13 +54,13 @@ def load_wikitext_records(raw_path: Path) -> list[TextRecord]:
     current_title = "unknown"
     for line in raw_path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
-        heading = HEADING_PATTERN.match(stripped)
+        heading = re.match(r"^=+\s+(.+?)\s+=+$", stripped)
         if heading:
             current_title = heading.group(1)
             continue
         if not stripped or stripped.startswith("="):
             continue
-        tokens = TOKEN_PATTERN.findall(stripped)
+        tokens = re.findall(r"[A-Za-z][A-Za-z'-]*", stripped)
         if 24 <= len(tokens) <= 180:
             records.append(TextRecord(" ".join(tokens), current_title))
     return records
@@ -78,7 +78,7 @@ def select_topic_records(
         record
         for record in records
         if keyword_set.intersection(
-            TOKEN_PATTERN.findall(f"{record.title} {record.text}".lower())
+            re.findall(r"[A-Za-z][A-Za-z'-]*", f"{record.title} {record.text}".lower())
         )
     ]
     if len(scored_records) < count:
@@ -91,7 +91,7 @@ def select_topic_records(
 
 
 def tokenize(text: str) -> list[str]:
-    return [token.lower() for token in TOKEN_PATTERN.findall(text)]
+    return [token.lower() for token in re.findall(r"[A-Za-z][A-Za-z'-]*", text)]
 
 
 def tfidf_features(texts: list[str], *, vocabulary_size: int) -> Tensor:
@@ -148,7 +148,9 @@ def make_latents(
 
 
 class BridgeDiffusionNetwork(nn.Module):
-    def __init__(self, latent_dimension: int, candidate_count: int, hidden_dimension: int) -> None:
+    def __init__(
+        self, latent_dimension: int, candidate_count: int, hidden_dimension: int
+    ) -> None:
         super().__init__()
         self.latent_dimension = latent_dimension
         self.candidate_count = candidate_count
@@ -160,7 +162,9 @@ class BridgeDiffusionNetwork(nn.Module):
             nn.Linear(hidden_dimension, 2 * candidate_count * latent_dimension),
         )
 
-    def forward(self, state: Tensor, time: Tensor, direction: Tensor) -> tuple[Tensor, Tensor]:
+    def forward(
+        self, state: Tensor, time: Tensor, direction: Tensor
+    ) -> tuple[Tensor, Tensor]:
         features = torch.cat(
             [
                 state,
@@ -203,8 +207,11 @@ def bridge_training_batch(
     score_target = -noise / variance.sqrt()[:, None]
     bridge_drift_target = (target - state) / (1.0 - time)[:, None]
     direction_tensor = torch.full_like(time, direction)
-    return state, time, direction_tensor, torch.stack(
-        [bridge_drift_target, score_target], dim=1
+    return (
+        state,
+        time,
+        direction_tensor,
+        torch.stack([bridge_drift_target, score_target], dim=1),
     )
 
 
@@ -226,7 +233,7 @@ def train_bridge(
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     generator = torch.Generator().manual_seed(seed)
     losses: list[float] = []
-    for _ in range(steps):
+    for step_index in range(steps):
         forward = bridge_training_batch(
             endpoints,
             batch_size,
@@ -254,11 +261,9 @@ def train_bridge(
         direction = torch.cat([forward[2], reverse[2]])
         targets = torch.cat([forward[3], reverse[3]])
         drift_prediction, score_prediction = model(state, time, direction)
-        candidate_losses = (
-            drift_prediction - targets[:, 0, None, :]
-        ).square().mean(-1) + score_weight * (
-            score_prediction - targets[:, 1, None, :]
-        ).square().mean(-1)
+        candidate_losses = (drift_prediction - targets[:, 0, None, :]).square().mean(
+            -1
+        ) + score_weight * (score_prediction - targets[:, 1, None, :]).square().mean(-1)
         result = best_of_k_loss(candidate_losses)
         optimizer.zero_grad(set_to_none=True)
         result.loss.backward()
@@ -291,11 +296,15 @@ def rollout_bridge(
         direction_tensor = torch.full_like(time, direction)
         drift_candidates, _ = model(state, time, direction_tensor)
         candidate_state = state[:, None] + step_size * drift_candidates
-        candidate_state = candidate_state + math.sqrt(epsilon * step_size) * torch.randn(
+        candidate_state = candidate_state + math.sqrt(
+            epsilon * step_size
+        ) * torch.randn(
             candidate_state.shape,
             generator=generator,
         )
-        target_distance = torch.cdist(candidate_state.flatten(0, 1), destination).square()
+        target_distance = torch.cdist(
+            candidate_state.flatten(0, 1), destination
+        ).square()
         target_distance = target_distance.min(dim=1).values.reshape(len(state), -1)
         winner = target_distance.argmin(dim=1)
         state = candidate_state[torch.arange(len(state)), winner]
@@ -303,7 +312,9 @@ def rollout_bridge(
     return torch.stack(path)
 
 
-def nearest_text(latent: Tensor, reference_latents: Tensor, reference_texts: list[str]) -> list[str]:
+def nearest_text(
+    latent: Tensor, reference_latents: Tensor, reference_texts: list[str]
+) -> list[str]:
     nearest = torch.cdist(latent, reference_latents).square().argmin(dim=1)
     return [reference_texts[int(index)] for index in nearest]
 
@@ -411,8 +422,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-root", type=Path, default=Path("data/wikitext-2"))
     parser.add_argument("--download", action="store_true")
-    parser.add_argument("--source-keywords", default="computer,software,technology,science,research,mathematics,physics")
-    parser.add_argument("--target-keywords", default="music,film,television,actor,football,album,novel")
+    parser.add_argument(
+        "--source-keywords",
+        default="computer,software,technology,science,research,mathematics,physics",
+    )
+    parser.add_argument(
+        "--target-keywords", default="music,film,television,actor,football,album,novel"
+    )
     parser.add_argument("--sample-count", type=int, default=96)
     parser.add_argument("--vocabulary-size", type=int, default=1_024)
     parser.add_argument("--latent-dimension", type=int, default=16)
@@ -426,13 +442,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ot-iterations", type=int, default=300)
     parser.add_argument("--learning-rate", type=float, default=2e-3)
     parser.add_argument("--seed", type=int, default=17)
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs/text_wikitext_ot_diffusion"))
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("outputs/text_wikitext_ot_diffusion")
+    )
     return parser.parse_args()
 
 
 def run(args: argparse.Namespace) -> dict[str, object]:
     if args.sample_count < 4 or args.exploration_candidates < 1:
-        raise ValueError("sample-count must be at least four and candidates must be positive")
+        raise ValueError(
+            "sample-count must be at least four and candidates must be positive"
+        )
     torch.manual_seed(args.seed)
     generator = torch.Generator().manual_seed(args.seed)
     raw_path = ensure_wikitext(args.data_root, download=args.download)
@@ -524,7 +544,9 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 "reverse_nearest_source": reverse_nearest[index],
             }
         )
-    (args.output_dir / "examples.json").write_text(json.dumps(examples, indent=2) + "\n")
+    (args.output_dir / "examples.json").write_text(
+        json.dumps(examples, indent=2) + "\n"
+    )
     summary = {
         "dataset": "WikiText-2 train.raw",
         "method": "entropic OT plus bidirectional Brownian-bridge score/drift diffusion",

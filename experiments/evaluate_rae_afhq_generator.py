@@ -361,21 +361,6 @@ def summary(values: torch.Tensor) -> dict[str, float]:
     }
 
 
-def diversity_metrics(real: torch.Tensor, generated: torch.Tensor) -> dict[str, object]:
-    real_distance = off_diagonal_values(pairwise_cosine_distance(real, real))
-    generated_distance = off_diagonal_values(
-        pairwise_cosine_distance(generated, generated)
-    )
-    real_summary = summary(real_distance)
-    generated_summary = summary(generated_distance)
-    return {
-        "heldout_real": real_summary,
-        "generated": generated_summary,
-        "mean_ratio_generated_to_real": generated_summary["mean"]
-        / real_summary["mean"],
-    }
-
-
 def nearest_distances(
     query: torch.Tensor, reference: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -470,10 +455,13 @@ def split_paths_for_class(split: dict[str, object], class_label: int) -> list[Pa
     paths = split["paths"]
     if not isinstance(labels, torch.Tensor) or not isinstance(paths, list):
         raise TypeError("Feature split paths are invalid")
+    label_values = labels.tolist()
+    if len(paths) != len(label_values):
+        raise ValueError("Feature split path and label counts differ")
     return [
         Path(path)
-        for path, label in zip(paths, labels.tolist(), strict=True)
-        if label == class_label
+        for path_index, path in enumerate(paths)
+        if label_values[path_index] == class_label
     ]
 
 

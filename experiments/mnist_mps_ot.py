@@ -13,7 +13,8 @@ from torch import Tensor
 from torchvision import datasets
 
 from brown_bridge.ot import sinkhorn
-from brown_bridge.paths import CoupledEndpoints, sample_coupling
+from brown_bridge.paths import sample_coupling
+from brown_bridge.schemas import CoupledEndpoints
 
 
 def load_mnist_class(
@@ -28,7 +29,9 @@ def load_mnist_class(
     if not 0 <= label <= 9:
         raise ValueError("MNIST labels must lie in [0, 9]")
     if sample_count < 1 or image_size < 4:
-        raise ValueError("sample_count must be positive and image_size must be at least four")
+        raise ValueError(
+            "sample_count must be positive and image_size must be at least four"
+        )
     dataset = datasets.MNIST(root=root, train=True, download=download)
     selected = dataset.targets == label
     images = dataset.data[selected][:sample_count].float().div(255.0).unsqueeze(1)
@@ -181,7 +184,9 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     if args.source_label == args.target_label:
         raise ValueError("source-label and target-label must differ")
     if args.display_steps < 2 or args.particles < 1:
-        raise ValueError("display-steps must be at least two and particles must be positive")
+        raise ValueError(
+            "display-steps must be at least two and particles must be positive"
+        )
 
     device = torch.device("mps")
     source, source_shape = load_mnist_class(

@@ -44,8 +44,9 @@ comm -12 \
     <(find "$AFHQ/val/cat" "$AFHQ/val/dog" -type f -printf '%f\n' | sort)
 ```
 
-The tracked `logs/.gitkeep` ensures Slurm can open each job's configured output
-and error paths before the script body starts.
+Submit jobs from an existing working directory. Slurm writes
+`slurm-<job-name>-<job-id>.out` and `.err` there, so a tracked log directory is
+not required.
 
 ## Training
 

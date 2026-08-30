@@ -1,1 +1,1 @@
-"""DINO feature transport and editing modules."""
+"""Optimal transport utilities used by the retained experiments."""
