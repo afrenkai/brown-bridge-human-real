@@ -27,23 +27,13 @@ the upstream validation split stays separate. Create them before submission:
 REPO=/home/afrenk/brown-bridge-human-real
 AFHQ=/home/afrenk/twisted-maps/data/afhq
 rm -rf "$REPO/data/afhq_cat_dog_train" \
-       "$REPO/data/afhq_cat_dog_smoke" \
        "$REPO/data/afhq_cat_dog_validation"
 mkdir -p "$REPO/data/afhq_cat_dog_train" \
-         "$REPO/data/afhq_cat_dog_smoke/cat" \
-         "$REPO/data/afhq_cat_dog_smoke/dog" \
          "$REPO/data/afhq_cat_dog_validation"
 ln -s "$AFHQ/train/cat" "$REPO/data/afhq_cat_dog_train/cat"
 ln -s "$AFHQ/train/dog" "$REPO/data/afhq_cat_dog_train/dog"
 ln -s "$AFHQ/val/cat" "$REPO/data/afhq_cat_dog_validation/cat"
 ln -s "$AFHQ/val/dog" "$REPO/data/afhq_cat_dog_validation/dog"
-for CLASS_NAME in cat dog; do
-    find "$AFHQ/train/$CLASS_NAME" -maxdepth 1 -type f -name '*.jpg' \
-        | sort | head -n 128 \
-        | while read -r IMAGE_PATH; do
-            ln -s "$IMAGE_PATH" "$REPO/data/afhq_cat_dog_smoke/$CLASS_NAME/"
-        done
-done
 ```
 
 Audit split membership before training. This command must print nothing:
@@ -73,7 +63,6 @@ Run the jobs in this order:
 
 ```bash
 sbatch slurm_scripts/turing/setup_rae_managed_python.sbatch
-sbatch slurm_scripts/turing/rae_afhq_dit_s_smoke_h100.sbatch
 sbatch slurm_scripts/turing/rae_afhq_dit_s_full_h100.sbatch
 ```
 
@@ -98,8 +87,7 @@ The full evaluation sample command is encoded in
 cats and 5,000 dogs with 21-step ODE sampling and CFG 1.5.
 
 `experiments/render_rae_ot_sde_roundtrip.py` is a separate endpoint-coupled
-entropic-OT Brownian bridge diagnostic. `render_rae_gaussian_domain_sde.py` also
-uses endpoint pools and must not be described as a source-only generator.
+entropic-OT Brownian bridge diagnostic, not a source-only generator.
 
 ## Held-out known-class evaluation
 
